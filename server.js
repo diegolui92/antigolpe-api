@@ -20,37 +20,111 @@ function gerarApiKey() {
 
 // ================= CRIAR API KEY =================
 app.post('/api/criar-chave', async (req, res) => {
-  try {
-    const { nome, limite } = req.body;
+  const { nome, limite } = req.body;
 
-    const novaChave = gerarApiKey();
+  const novaChave = gerarApiKey();
 
-    const { error } = await supabase.from('chaves_api').insert([
-      {
-        chave: novaChave,
-        nome: nome || 'Cliente',
-        limite: limite || 100,
-        uso: 0
-      }
-    ]);
-
-    if (error) {
-      console.log('ERRO SUPABASE:', error);
-      return res.status(500).json({ erro: 'Erro ao salvar no banco' });
+  const { error } = await supabase.from('chaves_api').insert([
+    {
+      chave: novaChave,
+      nome: nome || 'Cliente',
+      limite: limite || 100,
+      uso: 0
     }
+  ]);
 
-    res.json({
-      sucesso: true,
-      api_key: novaChave
-    });
-
-  } catch (err) {
-    console.log('ERRO GERAL:', err);
-    res.status(500).json({ erro: 'Erro interno do servidor' });
+  if (error) {
+    return res.status(500).json({ erro: 'Erro ao criar chave' });
   }
+
+  res.json({
+    sucesso: true,
+    api_key: novaChave
+  });
+});
+
+// ================= VALIDAR API KEY =================
+async function validarChave(apiKey) {
+  const { data } = await supabase
+    .from('chaves_api')
+    .select('*')
+    .eq('chave', apiKey)
+    .single();
+
+  if (!data) return { ok: false };
+
+  if (data.uso >= data.limite) {
+    return { ok: false, motivo: 'limite atingido' };
+  }
+
+  // atualizar uso
+  await supabase
+    .from('chaves_api')
+    .update({ uso: data.uso + 1 })
+    .eq('id', data.id);
+
+  return { ok: true };
+}
+
+// ================= IA ANTIGOLPE =================
+function analisarIA(texto) {
+  let score = 0;
+  let motivos = [];
+
+  const t = texto.toLowerCase();
+
+  if (t.includes('pix')) {
+    score += 40;
+    motivos.push('PIX suspeito');
+  }
+
+  if (t.includes('urgente')) {
+    score += 30;
+    motivos.push('Urgência');
+  }
+
+  if (t.includes('clique')) {
+    score += 30;
+    motivos.push('Indução a clique');
+  }
+
+  if (t.includes('ganhe dinheiro')) {
+    score += 40;
+    motivos.push('Promessa suspeita');
+  }
+
+  return { score, motivos };
+}
+
+// ================= VERIFICAR =================
+app.post('/api/verificar', async (req, res) => {
+  const { texto, tipo, api_key } = req.body;
+
+  if (!api_key) {
+    return res.status(401).json({ erro: 'API KEY obrigatória' });
+  }
+
+  const validacao = await validarChave(api_key);
+
+  if (!validacao.ok) {
+    return res.status(403).json({ erro: 'API KEY inválida ou limite atingido' });
+  }
+
+  const analise = analisarIA(texto);
+
+  let status = 'SEGURO';
+  if (analise.score > 60) status = 'ALTO RISCO';
+  else if (analise.score > 30) status = 'SUSPEITO';
+
+  res.json({
+    tipo,
+    status,
+    score: analise.score,
+    mensagem: analise.motivos.join(' | ')
+  });
 });
 
 // ================= START =================
-app.listen(process.env.PORT || 3000, () => {
-  console.log('Servidor rodando');
+app.listen(3000, () => {
+  console.log('Servidor rodando na porta 3000');
 });
