@@ -46,7 +46,7 @@ app.post('/api/criar-chave', async (req, res) => {
 // ================= VALIDAR API KEY =================
 async function validarChave(apiKey) {
   const { data } = await supabase
-    .from('chaves_api')
+    .from('api_keys')
     .select('*')
     .eq('chave', apiKey)
     .single();
@@ -59,7 +59,7 @@ async function validarChave(apiKey) {
 
   // atualizar uso
   await supabase
-    .from('chaves_api')
+    .from('api_keys')
     .update({ uso: data.uso + 1 })
     .eq('id', data.id);
 
