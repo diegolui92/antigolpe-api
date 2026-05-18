@@ -1,0 +1,198 @@
+import { useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard,
+} from 'react-native';
+
+export default function HomeScreen({ navigation }: any) {
+  const [consulta, setConsulta] = useState('');
+  const [resultado, setResultado] = useState('');
+  const [corResultado, setCorResultado] = useState('#FFF');
+
+  function verificarRisco() {
+    Keyboard.dismiss();
+
+    const texto = consulta.toLowerCase();
+
+    const palavrasPerigosas = [
+      'golpe',
+      'pix urgente',
+      'promoção falsa',
+      'clique aqui',
+      'senha',
+      'dinheiro rápido',
+    ];
+
+    const encontrouPalavraPerigosa =
+      palavrasPerigosas.some((palavra) =>
+        texto.includes(palavra)
+      );
+
+    if (encontrouPalavraPerigosa) {
+      setResultado(
+        '🔴 ALTO RISCO: padrão suspeito identificado.'
+      );
+      setCorResultado('#FF4D4D');
+
+    } else if (
+      texto.includes('.com') ||
+      texto.includes('http')
+    ) {
+      setResultado(
+        '🟢 LINK APARENTEMENTE VÁLIDO.'
+      );
+      setCorResultado('#00FF88');
+
+    } else if (consulta.length < 5) {
+      setResultado(
+        '🟡 SUSPEITO: informação insuficiente.'
+      );
+      setCorResultado('#FFD700');
+
+    } else {
+      setResultado(
+        '🟢 Nenhuma ameaça encontrada.'
+      );
+      setCorResultado('#00FF88');
+    }
+  }
+
+  return (
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.container}>
+          <Text style={styles.logo}>AntiGolpe BR</Text>
+
+          <Text style={styles.subtitle}>
+            Consulte números, PIX e links suspeitos
+          </Text>
+
+          <TextInput
+            placeholder="Digite telefone, PIX ou link"
+            placeholderTextColor="#999"
+            style={styles.input}
+            value={consulta}
+            onChangeText={setConsulta}
+          />
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={verificarRisco}
+          >
+            <Text style={styles.buttonText}>
+              Verificar Risco
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.denunciaButton}
+            onPress={() => navigation.navigate('Denuncia')}
+          >
+            <Text style={styles.denunciaText}>
+              Fazer Denúncia
+            </Text>
+          </TouchableOpacity>
+
+          {resultado !== '' && (
+            <View style={styles.resultadoBox}>
+              <Text
+                style={[
+                  styles.resultadoText,
+                  { color: corResultado },
+                ]}
+              >
+                {resultado}
+              </Text>
+            </View>
+          )}
+        </View>
+      </KeyboardAvoidingView>
+    </TouchableWithoutFeedback>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0A0A0A',
+    justifyContent: 'center',
+    padding: 25,
+  },
+
+  logo: {
+    color: '#00FF88',
+    fontSize: 38,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 15,
+  },
+
+  subtitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 40,
+  },
+
+  input: {
+    backgroundColor: '#1A1A1A',
+    color: '#FFF',
+    padding: 18,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  button: {
+    backgroundColor: '#00FF88',
+    padding: 18,
+    borderRadius: 12,
+  },
+
+  buttonText: {
+    color: '#000',
+    textAlign: 'center',
+    fontWeight: 'bold',
+    fontSize: 18,
+  },
+
+  denunciaButton: {
+    marginTop: 15,
+    borderWidth: 1,
+    borderColor: '#00FF88',
+    padding: 15,
+    borderRadius: 12,
+  },
+
+  denunciaText: {
+    color: '#00FF88',
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+
+  resultadoBox: {
+    marginTop: 30,
+    backgroundColor: '#1A1A1A',
+    padding: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  resultadoText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+});
