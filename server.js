@@ -8,23 +8,24 @@ app.use(cors());
 app.use(express.json());
 
 // ================= CONFIG =================
-const GOOGLE_API_KEY = 'AIzaSyB_hMyueuVvFFT-BBlDIQ7GU8y83YJrgqw';
+const GOOGLE_API_KEY = 'SUA_API_KEY_AQUI'; // pode deixar como está se já funciona
 
-// 🔥 AGORA CORRETO (SEM /rest/v1/)
 const supabase = createClient(
   'https://ojuiufrckgwndhqnqxmo.supabase.co',
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWl1ZnJja2d3bmRocW5xeG1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MDQwNDcsImV4cCI6MjA5NDM4MDA0N30.e-nV3mfYha04gHOEwl9b4q55Ukzio029GDb5DzJBAEc'
 );
 
-// ================= IA =================
+// ================= IA FORTE =================
 function analisarIA(texto) {
   let score = 0;
   let motivos = [];
   const t = texto.toLowerCase();
 
   if (t.includes('urgente')) { score += 30; motivos.push('Urgência'); }
-  if (t.includes('ganhe') || t.includes('promo')) { score += 30; motivos.push('Promessa suspeita'); }
+  if (t.includes('ganhe') || t.includes('dinheiro')) { score += 30; motivos.push('Promessa de ganho'); }
   if (t.includes('clique')) { score += 20; motivos.push('Indução a clique'); }
+  if (t.includes('promoção') || t.includes('oferta')) { score += 20; motivos.push('Promoção suspeita'); }
+  if (t.includes('pix')) { score += 20; motivos.push('Solicitação de PIX'); }
 
   return { score, motivos };
 }
@@ -32,7 +33,10 @@ function analisarIA(texto) {
 // ================= VALIDADORES =================
 const num = v => v.replace(/\D/g, '');
 
-const isCPF = v => num(v).length === 11;
+const isCPF = v => {
+  const n = num(v);
+  return n.length === 11 && !v.includes('@');
+};
 
 const isTelefone = v => {
   const n = num(v);
@@ -109,7 +113,11 @@ app.post('/api/verificar', async (req, res) => {
   score += ia.score;
   mensagens.push(...ia.motivos);
 
+  // 🔥 REGRA FORTE PARA LINK
   if (tipo === 'LINK') {
+    score += 20;
+    mensagens.push('Link desconhecido');
+
     const google = await verificarGoogle(texto);
     score += google.score;
     mensagens.push(google.msg);
@@ -118,7 +126,7 @@ app.post('/api/verificar', async (req, res) => {
   if (tipo === 'PIX_CPF') mensagens.push('PIX CPF');
   if (tipo === 'PIX_EMAIL') mensagens.push('PIX Email');
   if (tipo === 'PIX_ALEATORIA') mensagens.push('PIX Aleatória');
-  if (tipo === 'TELEFONE') mensagens.push('Telefone válido');
+  if (tipo === 'TELEFONE') mensagens.push('Telefone');
 
   const qtd = await buscarDenuncias(texto);
   if (qtd > 0) {
@@ -126,9 +134,13 @@ app.post('/api/verificar', async (req, res) => {
     mensagens.push(`🚨 ${qtd} denúncia(s)`);
   }
 
-  let status = 'SEGURO';
+  // 🔥 NOVA LÓGICA PROFISSIONAL
+  let status = 'SUSPEITO';
+
   if (score >= 80) status = 'ALTO RISCO';
   else if (score >= 40) status = 'SUSPEITO';
+  else if (score > 0) status = 'ATENÇÃO';
+  else status = 'NEUTRO';
 
   res.json({
     tipo,
