@@ -1,13 +1,13 @@
 {
   "name": "antigolpe-api",
   "version": "1.0.0",
+  "description": "API AntiGolpe",
   "main": "server.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.0.0",
+    "@supabase/supabase-js": "^2.39.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "node-fetch": "^2.6.7"
