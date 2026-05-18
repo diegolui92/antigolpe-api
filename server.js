@@ -20,44 +20,53 @@ function gerarApiKey() {
 
 // ================= CRIAR API KEY =================
 app.post('/api/criar-chave', async (req, res) => {
-  const { nome, limite } = req.body;
+  try {
+    const { nome, limite } = req.body;
 
-  const novaChave = gerarApiKey();
+    const novaChave = gerarApiKey();
 
-  const { error } = await supabase.from('chaves_api').insert([
-    {
-      chave: novaChave,
-      nome: nome || 'Cliente',
-      limite: limite || 100,
-      uso: 0
+    const { error } = await supabase.from('api_keys').insert([
+      {
+        chave: novaChave,
+        nome: nome || 'Cliente',
+        limite: limite || 100,
+        uso: 0
+      }
+    ]);
+
+    if (error) {
+      console.log('ERRO BANCO:', error);
+      return res.status(500).json({ erro: 'Erro ao criar chave' });
     }
-  ]);
 
-  if (error) {
-    return res.status(500).json({ erro: 'Erro ao criar chave' });
+    return res.json({
+      sucesso: true,
+      api_key: novaChave
+    });
+
+  } catch (err) {
+    console.log('ERRO SERVIDOR:', err);
+    return res.status(500).json({ erro: 'Erro interno' });
   }
-
-  res.json({
-    sucesso: true,
-    api_key: novaChave
-  });
 });
 
 // ================= VALIDAR API KEY =================
 async function validarChave(apiKey) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('api_keys')
     .select('*')
     .eq('chave', apiKey)
     .single();
 
-  if (!data) return { ok: false };
+  if (error || !data) {
+    return { ok: false };
+  }
 
   if (data.uso >= data.limite) {
     return { ok: false, motivo: 'limite atingido' };
   }
 
-  // atualizar uso
+  // Atualiza uso
   await supabase
     .from('api_keys')
     .update({ uso: data.uso + 1 })
@@ -71,7 +80,7 @@ function analisarIA(texto) {
   let score = 0;
   let motivos = [];
 
-  const t = texto.toLowerCase();
+  const t = (texto || '').toLowerCase();
 
   if (t.includes('pix')) {
     score += 40;
@@ -98,33 +107,45 @@ function analisarIA(texto) {
 
 // ================= VERIFICAR =================
 app.post('/api/verificar', async (req, res) => {
-  const { texto, tipo, api_key } = req.body;
+  try {
+    const { texto, tipo, api_key } = req.body;
 
-  if (!api_key) {
-    return res.status(401).json({ erro: 'API KEY obrigatória' });
+    if (!api_key) {
+      return res.status(401).json({ erro: 'API KEY obrigatória' });
+    }
+
+    const validacao = await validarChave(api_key);
+
+    if (!validacao.ok) {
+      return res.status(403).json({ erro: 'API KEY inválida ou limite atingido' });
+    }
+
+    const analise = analisarIA(texto);
+
+    let status = 'SEGURO';
+    if (analise.score > 60) status = 'ALTO RISCO';
+    else if (analise.score > 30) status = 'SUSPEITO';
+
+    return res.json({
+      tipo,
+      status,
+      score: analise.score,
+      mensagem: analise.motivos.join(' | ')
+    });
+
+  } catch (err) {
+    console.log('ERRO VERIFICAR:', err);
+    return res.status(500).json({ erro: 'Erro interno' });
   }
+});
 
-  const validacao = await validarChave(api_key);
-
-  if (!validacao.ok) {
-    return res.status(403).json({ erro: 'API KEY inválida ou limite atingido' });
-  }
-
-  const analise = analisarIA(texto);
-
-  let status = 'SEGURO';
-  if (analise.score > 60) status = 'ALTO RISCO';
-  else if (analise.score > 30) status = 'SUSPEITO';
-
-  res.json({
-    tipo,
-    status,
-    score: analise.score,
-    mensagem: analise.motivos.join(' | ')
-  });
+// ================= HEALTH CHECK =================
+app.get('/', (req, res) => {
+  res.send('API AntiGolpe rodando 🚀');
 });
 
 // ================= START =================
-app.listen(3000, () => {
-  console.log('Servidor rodando na porta 3000');
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log('Servidor rodando na porta ' + PORT);
 });
