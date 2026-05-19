@@ -8,45 +8,32 @@ app.use(cors());
 app.use(express.json());
 
 const supabase = createClient(
-  "https://ojuiufrckgwndhqnqxmo.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWl1ZnJja2d3bmRocW5xeG1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MDQwNDcsImV4cCI6MjA5NDM4MDA0N30.e-nV3mfYha04gHOEwl9b4q55Ukzio029GDb5DzJBAEc"
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
 );
 
-// =========================
-// FUNÇÕES
-// =========================
-
+// DETECTAR TIPO
 function detectarTipo(texto) {
-  if (!texto) return "DESCONHECIDO";
-
   if (texto.includes("@")) return "EMAIL";
 
   if (
+    texto.includes("http") ||
     texto.includes(".com") ||
-    texto.includes(".net") ||
-    texto.includes(".org") ||
     texto.includes(".xyz")
   ) {
     return "SITE";
   }
 
-  if (texto.length >= 11 && texto.length <= 14) {
-    return "TELEFONE";
+  if (texto.length >= 11) {
+    return "TELEFONE/PIX";
   }
 
-  return "PIX";
-}
-
-function calcularStatus(score) {
-  if (score >= 80) return "ALTO RISCO";
-  if (score >= 40) return "SUSPEITO";
-  return "SEGURO";
+  return "DESCONHECIDO";
 }
 
 // =========================
 // VERIFICAR
 // =========================
-
 app.post("/api/verificar", async (req, res) => {
   try {
     const { texto } = req.body;
@@ -59,84 +46,68 @@ app.post("/api/verificar", async (req, res) => {
 
     const tipo = detectarTipo(texto);
 
-    // BUSCA LISTA NEGRA
-    const { data: blacklist } = await supabase
-      .from("lista_negra")
-      .select("*")
-      .eq("valor", texto)
-      .limit(1);
-
-    // BUSCA REPUTAÇÃO
-    const { data: reputacao } = await supabase
+    // CONSULTA REPUTAÇÃO
+    const { data: reputacao, error: erroReputacao } = await supabase
       .from("reputacoes")
       .select("*")
       .eq("valor", texto)
       .limit(1);
 
-    // MOTIVOS
-    const { data: denuncias } = await supabase
-      .from("denuncias")
+    if (erroReputacao) {
+      console.log("ERRO REPUTACAO:");
+      console.log(erroReputacao);
+    }
+
+    // CONSULTA DENÚNCIAS
+    const { data: denunciasBanco, error: erroDenuncias } = await supabase
+      .from("lista_negra")
       .select("*")
       .eq("valor", texto);
 
-    let motivos = [];
-
-    if (denuncias && denuncias.length > 0) {
-      motivos = denuncias.map((d) => d.motivo);
+    if (erroDenuncias) {
+      console.log("ERRO DENUNCIAS:");
+      console.log(erroDenuncias);
     }
 
-    // SE ESTÁ NA LISTA NEGRA
-    if (blacklist && blacklist.length > 0) {
-      return res.json({
-        tipo,
-        status: "ALTO RISCO",
-        score: 100,
-        motivo: "Item presente na lista negra",
-        denuncias: motivos.length,
-        motivos,
-      });
-    }
-
-    // SE TEM REPUTAÇÃO
+    // SE EXISTE REPUTAÇÃO
     if (reputacao && reputacao.length > 0) {
       return res.json({
-        tipo,
-        status: reputacao[0].status,
-        score: reputacao[0].pontuacao,
-        motivo: "Resultado vindo da reputação do banco",
+        tipo: reputacao[0].tipo || tipo,
+        status: reputacao[0].status || "SUSPEITO",
+        score: reputacao[0].pontuacao || 0,
         denuncias: reputacao[0].denuncias || 0,
-        motivos,
+        motivo: "Resultado baseado na reputação da comunidade",
+        motivos:
+          denunciasBanco?.map((item) => item.motivo) || [],
       });
     }
 
-    // ANÁLISE AUTOMÁTICA
+    // ANÁLISE PADRÃO IA
+    let status = "SEGURO";
     let score = 0;
     let motivo = "Nenhum risco encontrado";
 
     if (
       texto.includes(".xyz") ||
-      texto.includes("promo") ||
-      texto.includes("gratis")
+      texto.includes("bit.ly") ||
+      texto.includes("ganhe") ||
+      texto.includes("pix")
     ) {
-      score += 40;
+      status = "SUSPEITO";
+      score = 40;
       motivo = "Domínio suspeito";
     }
-
-    if (texto.includes("suporte")) {
-      score += 20;
-    }
-
-    const status = calcularStatus(score);
 
     return res.json({
       tipo,
       status,
       score,
+      denuncias: 0,
       motivo,
-      denuncias: motivos.length,
-      motivos,
+      motivos: [],
     });
   } catch (error) {
+    console.log("ERRO GERAL VERIFICAR:");
     console.log(error);
 
     return res.status(500).json({
@@ -148,10 +119,11 @@ app.post("/api/verificar", async (req, res) => {
 // =========================
 // DENUNCIAR
 // =========================
-
 app.post("/api/denunciar", async (req, res) => {
   try {
     const { valor, motivo, detalhes } = req.body;
+
+    console.log("DENUNCIA RECEBIDA:", valor);
 
     if (!valor) {
       return res.status(400).json({
@@ -161,55 +133,72 @@ app.post("/api/denunciar", async (req, res) => {
 
     const tipo = detectarTipo(valor);
 
-    // SALVA DENÚNCIA
-    await supabase.from("denuncias").insert([
-      {
-        valor,
-        tipo,
-        motivo,
-        detalhes,
-      },
-    ]);
+    // SALVA LISTA NEGRA
+    const { error: erroLista } = await supabase
+      .from("lista_negra")
+      .insert([
+        {
+          valor,
+          tipo,
+          motivo,
+          detalhes,
+          risco: "ALTO RISCO",
+        },
+      ]);
 
-    // LISTA NEGRA
-    await supabase.from("lista_negra").upsert([
-      {
-        valor,
-        tipo,
-        motivo,
-        risco: "ALTO RISCO",
-      },
-    ]);
+    if (erroLista) {
+      console.log("ERRO LISTA NEGRA:");
+      console.log(erroLista);
+
+      return res.status(500).json({
+        erro: erroLista.message,
+      });
+    }
 
     // BUSCA REPUTAÇÃO
-    const { data: reputacao } = await supabase
+    const { data: reputacao, error: erroBusca } = await supabase
       .from("reputacoes")
       .select("*")
       .eq("valor", valor)
       .limit(1);
 
-    if (reputacao && reputacao.length > 0) {
-      const novaPontuacao = reputacao[0].pontuacao + 20;
-      const novoTotal = reputacao[0].denuncias + 1;
+    if (erroBusca) {
+      console.log("ERRO BUSCA REPUTACAO:");
+      console.log(erroBusca);
+    }
 
-      await supabase
+    // ATUALIZA REPUTAÇÃO
+    if (reputacao && reputacao.length > 0) {
+      const { error: erroUpdate } = await supabase
         .from("reputacoes")
         .update({
-          denuncias: novoTotal,
-          pontuacao: novaPontuacao,
-          status: calcularStatus(novaPontuacao),
+          denuncias: reputacao[0].denuncias + 1,
+          pontuacao: reputacao[0].pontuacao + 50,
+          status: "ALTO RISCO",
         })
         .eq("valor", valor);
+
+      if (erroUpdate) {
+        console.log("ERRO UPDATE:");
+        console.log(erroUpdate);
+      }
     } else {
-      await supabase.from("reputacoes").insert([
-        {
-          valor,
-          tipo,
-          denuncias: 1,
-          pontuacao: 50,
-          status: "SUSPEITO",
-        },
-      ]);
+      const { error: erroInsert } = await supabase
+        .from("reputacoes")
+        .insert([
+          {
+            valor,
+            tipo,
+            denuncias: 1,
+            pontuacao: 50,
+            status: "ALTO RISCO",
+          },
+        ]);
+
+      if (erroInsert) {
+        console.log("ERRO INSERT REPUTACAO:");
+        console.log(erroInsert);
+      }
     }
 
     return res.json({
@@ -217,6 +206,7 @@ app.post("/api/denunciar", async (req, res) => {
       mensagem: "Denúncia registrada",
     });
   } catch (error) {
+    console.log("ERRO GERAL DENUNCIA:");
     console.log(error);
 
     return res.status(500).json({
@@ -225,6 +215,9 @@ app.post("/api/denunciar", async (req, res) => {
   }
 });
 
+// =========================
+// SERVIDOR
+// =========================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
