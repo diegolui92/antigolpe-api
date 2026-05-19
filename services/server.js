@@ -153,6 +153,8 @@ app.post("/api/denunciar", async (req, res) => {
   try {
     const { valor, motivo, detalhes } = req.body;
 
+    console.log("DENUNCIA RECEBIDA:", valor);
+
     if (!valor) {
       return res.status(400).json({
         erro: "Valor não enviado",
@@ -161,25 +163,26 @@ app.post("/api/denunciar", async (req, res) => {
 
     const tipo = detectarTipo(valor);
 
-    // SALVA DENÚNCIA
-    await supabase.from("denuncias").insert([
-      {
-        valor,
-        tipo,
-        motivo,
-        detalhes,
-      },
-    ]);
+    // SALVA NA LISTA NEGRA
+    const { error: erroLista } = await supabase
+      .from("lista_negra")
+      .insert([
+        {
+          valor,
+          tipo,
+          motivo,
+          risco: "ALTO RISCO",
+        },
+      ]);
 
-    // LISTA NEGRA
-    await supabase.from("lista_negra").upsert([
-      {
-        valor,
-        tipo,
-        motivo,
-        risco: "ALTO RISCO",
-      },
-    ]);
+    if (erroLista) {
+      console.log("ERRO LISTA NEGRA:");
+      console.log(erroLista);
+
+      return res.status(500).json({
+        erro: erroLista.message,
+      });
+    }
 
     // BUSCA REPUTAÇÃO
     const { data: reputacao } = await supabase
@@ -189,15 +192,12 @@ app.post("/api/denunciar", async (req, res) => {
       .limit(1);
 
     if (reputacao && reputacao.length > 0) {
-      const novaPontuacao = reputacao[0].pontuacao + 20;
-      const novoTotal = reputacao[0].denuncias + 1;
-
       await supabase
         .from("reputacoes")
         .update({
-          denuncias: novoTotal,
-          pontuacao: novaPontuacao,
-          status: calcularStatus(novaPontuacao),
+          denuncias: reputacao[0].denuncias + 1,
+          pontuacao: reputacao[0].pontuacao + 50,
+          status: "ALTO RISCO",
         })
         .eq("valor", valor);
     } else {
@@ -207,7 +207,7 @@ app.post("/api/denunciar", async (req, res) => {
           tipo,
           denuncias: 1,
           pontuacao: 50,
-          status: "SUSPEITO",
+          status: "ALTO RISCO",
         },
       ]);
     }
@@ -217,6 +217,7 @@ app.post("/api/denunciar", async (req, res) => {
       mensagem: "Denúncia registrada",
     });
   } catch (error) {
+    console.log("ERRO GERAL:");
     console.log(error);
 
     return res.status(500).json({
