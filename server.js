@@ -1,151 +1,219 @@
-const express = require('express');
-const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-const crypto = require('crypto');
+const express = require("express");
+const cors = require("cors");
+const crypto = require("crypto");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
-// ================= CONFIG =================
+// ================= SUPABASE =================
+
 const supabase = createClient(
-  'https://ojuiufrckgwndhqnqxmo.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWl1ZnJja2d3bmRocW5xeG1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MDQwNDcsImV4cCI6MjA5NDM4MDA0N30.e-nV3mfYha04gHOEwl9b4q55Ukzio029GDb5DzJBAEc'
+  "https://ojuiufrckgwndhqnqxmo.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWl1ZnJja2d3bmRocW5xeG1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MDQwNDcsImV4cCI6MjA5NDM4MDA0N30.e-nV3mfYha04gHOEwl9b4q55Ukzio029GDb5DzJBAEc"
 );
 
-// ================= GERAR API KEY =================
+// ================= FUNÇÕES =================
+
 function gerarApiKey() {
-  return 'ag_' + crypto.randomBytes(16).toString('hex');
+  return "ag_" + crypto.randomBytes(16).toString("hex");
 }
 
-// ================= CRIAR API KEY =================
-app.post('/api/criar-chave', async (req, res) => {
-  try {
-    const { nome, limite } = req.body;
+function detectarTipo(texto) {
+  texto = texto.trim();
 
-    const novaChave = gerarApiKey();
-
-    const { error } = await supabase.from('api_keys').insert([
-      {
-        chave: novaChave,
-        nome: nome || 'Cliente',
-        limite: limite || 100,
-        uso: 0
-      }
-    ]);
-
-    if (error) {
-      console.log('ERRO BANCO:', error);
-      return res.status(500).json({ erro: 'Erro ao criar chave' });
-    }
-
-    return res.json({
-      sucesso: true,
-      api_key: novaChave
-    });
-
-  } catch (err) {
-    console.log('ERRO SERVIDOR:', err);
-    return res.status(500).json({ erro: 'Erro interno' });
-  }
-});
-
-// ================= VALIDAR API KEY =================
-async function validarChave(apiKey) {
-  const { data, error } = await supabase
-    .from('api_keys')
-    .select('*')
-    .eq('chave', apiKey)
-    .single();
-
-  if (error || !data) {
-    return { ok: false };
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(texto)) {
+    return "EMAIL";
   }
 
-  if (data.uso >= data.limite) {
-    return { ok: false, motivo: 'limite atingido' };
+  if (
+    texto.includes("www.") ||
+    texto.includes(".com") ||
+    texto.includes(".net") ||
+    texto.includes(".org") ||
+    texto.includes("http")
+  ) {
+    return "SITE";
   }
 
-  // Atualiza uso
-  await supabase
-    .from('api_keys')
-    .update({ uso: data.uso + 1 })
-    .eq('id', data.id);
+  const numeros = texto.replace(/\D/g, "");
 
-  return { ok: true };
+  if (numeros.length >= 10 && numeros.length <= 13) {
+    return "TELEFONE";
+  }
+
+  if (numeros.length === 11) {
+    return "CPF";
+  }
+
+  if (
+    texto.toLowerCase().includes("pix") ||
+    texto.toLowerCase().includes("chave")
+  ) {
+    return "PIX";
+  }
+
+  return "TEXTO";
 }
 
-// ================= IA ANTIGOLPE =================
-function analisarIA(texto) {
+function analisarRisco(texto, tipo) {
+  const t = texto.toLowerCase();
+
   let score = 0;
   let motivos = [];
 
-  const t = (texto || '').toLowerCase();
+  // FRASES SUSPEITAS
+  const palavras = [
+    "pix",
+    "urgente",
+    "clique aqui",
+    "dinheiro rápido",
+    "ganhe dinheiro",
+    "premio",
+    "senha",
+    "cartão",
+    "gratuito",
+    "100% garantido",
+    "renda extra",
+    "liberação imediata",
+  ];
 
-  if (t.includes('pix')) {
-    score += 40;
-    motivos.push('PIX suspeito');
+  palavras.forEach((p) => {
+    if (t.includes(p)) {
+      score += 20;
+      motivos.push(p);
+    }
+  });
+
+  // SITE SUSPEITO
+  if (tipo === "SITE") {
+    if (
+      t.includes(".xyz") ||
+      t.includes(".top") ||
+      t.includes(".click") ||
+      t.includes(".shop")
+    ) {
+      score += 40;
+      motivos.push("domínio suspeito");
+    }
+
+    if (
+      t.includes("goog1e") ||
+      t.includes("faceboook") ||
+      t.includes("mercadolivre-premio")
+    ) {
+      score += 60;
+      motivos.push("possível phishing");
+    }
   }
 
-  if (t.includes('urgente')) {
-    score += 30;
-    motivos.push('Urgência');
+  // EMAIL SUSPEITO
+  if (tipo === "EMAIL") {
+    if (
+      t.includes("suporte-banco") ||
+      t.includes("premio") ||
+      t.includes("bonus")
+    ) {
+      score += 40;
+      motivos.push("email suspeito");
+    }
   }
 
-  if (t.includes('clique')) {
-    score += 30;
-    motivos.push('Indução a clique');
+  // TELEFONE
+  if (tipo === "TELEFONE") {
+    if (t.startsWith("0800")) {
+      score += 10;
+      motivos.push("telefone mascarado");
+    }
   }
 
-  if (t.includes('ganhe dinheiro')) {
-    score += 40;
-    motivos.push('Promessa suspeita');
+  let status = "SEGURO";
+
+  if (score >= 80) {
+    status = "ALTO RISCO";
+  } else if (score >= 40) {
+    status = "SUSPEITO";
   }
 
-  return { score, motivos };
+  return {
+    status,
+    score,
+    mensagem:
+      motivos.length > 0
+        ? motivos.join(" | ")
+        : "Nenhum risco encontrado",
+  };
 }
 
-// ================= VERIFICAR =================
-app.post('/api/verificar', async (req, res) => {
+// ================= ROTAS =================
+
+// TESTE
+app.get("/", (req, res) => {
+  res.send("API AntiGolpe funcionando 🚀");
+});
+
+// CRIAR CHAVE
+app.post("/api/criar-chave", async (req, res) => {
   try {
-    const { texto, tipo, api_key } = req.body;
+    const { nome } = req.body;
 
-    if (!api_key) {
-      return res.status(401).json({ erro: 'API KEY obrigatória' });
+    const api_key = gerarApiKey();
+
+    const { error } = await supabase.from("api_keys").insert([
+      {
+        nome,
+        api_key,
+      },
+    ]);
+
+    if (error) {
+      return res.status(500).json({
+        erro: error.message,
+      });
     }
 
-    const validacao = await validarChave(api_key);
-
-    if (!validacao.ok) {
-      return res.status(403).json({ erro: 'API KEY inválida ou limite atingido' });
-    }
-
-    const analise = analisarIA(texto);
-
-    let status = 'SEGURO';
-    if (analise.score > 60) status = 'ALTO RISCO';
-    else if (analise.score > 30) status = 'SUSPEITO';
-
-    return res.json({
-      tipo,
-      status,
-      score: analise.score,
-      mensagem: analise.motivos.join(' | ')
+    res.json({
+      api_key,
     });
-
   } catch (err) {
-    console.log('ERRO VERIFICAR:', err);
-    return res.status(500).json({ erro: 'Erro interno' });
+    res.status(500).json({
+      erro: err.message,
+    });
   }
 });
 
-// ================= HEALTH CHECK =================
-app.get('/', (req, res) => {
-  res.send('API AntiGolpe rodando 🚀');
+// VERIFICAR
+app.post("/api/verificar", async (req, res) => {
+  try {
+    const { texto, api_key } = req.body;
+
+    if (!texto || !api_key) {
+      return res.status(400).json({
+        erro: "Texto e API Key obrigatórios",
+      });
+    }
+
+    const tipo = detectarTipo(texto);
+
+    const resultado = analisarRisco(texto, tipo);
+
+    res.json({
+      tipo,
+      ...resultado,
+    });
+  } catch (err) {
+    res.status(500).json({
+      erro: err.message,
+    });
+  }
 });
 
-// ================= START =================
-const PORT = process.env.PORT || 3000;
+// ================= SERVIDOR =================
+
+const PORT = process.env.PORT || 8080;
+
 app.listen(PORT, () => {
-  console.log('Servidor rodando na porta ' + PORT);
+  console.log("Servidor rodando na porta", PORT);
 });
