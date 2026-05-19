@@ -1,6 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
@@ -13,39 +12,40 @@ const supabase = createClient(
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWl1ZnJja2d3bmRocW5xeG1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MDQwNDcsImV4cCI6MjA5NDM4MDA0N30.e-nV3mfYha04gHOEwl9b4q55Ukzio029GDb5DzJBAEc"
 );
 
-function gerarApiKey() {
-  return "ag_" + crypto.randomBytes(16).toString("hex");
-}
+// =========================
+// FUNÇÕES
+// =========================
 
 function detectarTipo(texto) {
-  texto = texto.toLowerCase();
+  if (!texto) return "DESCONHECIDO";
 
   if (texto.includes("@")) return "EMAIL";
 
   if (
-    texto.includes("www.") ||
     texto.includes(".com") ||
-    texto.includes("http")
+    texto.includes(".net") ||
+    texto.includes(".org") ||
+    texto.includes(".xyz")
   ) {
     return "SITE";
   }
 
-  const numeros = texto.replace(/\D/g, "");
-
-  if (numeros.length >= 10 && numeros.length <= 13) {
+  if (texto.length >= 11 && texto.length <= 14) {
     return "TELEFONE";
   }
 
-  if (texto.includes("pix")) {
-    return "PIX";
-  }
-
-  return "TEXTO";
+  return "PIX";
 }
 
-app.get("/", (req, res) => {
-  res.send("API AntiGolpe online");
-});
+function calcularStatus(score) {
+  if (score >= 80) return "ALTO RISCO";
+  if (score >= 40) return "SUSPEITO";
+  return "SEGURO";
+}
+
+// =========================
+// VERIFICAR
+// =========================
 
 app.post("/api/verificar", async (req, res) => {
   try {
@@ -57,76 +57,97 @@ app.post("/api/verificar", async (req, res) => {
       });
     }
 
-    // CONSULTA BLACKLIST
+    const tipo = detectarTipo(texto);
+
+    // BUSCA LISTA NEGRA
     const { data: blacklist } = await supabase
       .from("lista_negra")
       .select("*")
       .eq("valor", texto)
       .limit(1);
 
-    if (blacklist && blacklist.length > 0) {
-      return res.json({
-        tipo: blacklist[0].tipo || detectarTipo(texto),
-        status: blacklist[0].risco || "ALTO RISCO",
-        score: 100,
-        motivo: blacklist[0].motivo || "Item denunciado",
-      });
-    }
-
-    // CONSULTA REPUTAÇÃO
+    // BUSCA REPUTAÇÃO
     const { data: reputacao } = await supabase
       .from("reputacoes")
       .select("*")
       .eq("valor", texto)
       .limit(1);
 
-    if (reputacao && reputacao.length > 0) {
+    // MOTIVOS
+    const { data: denuncias } = await supabase
+      .from("denuncias")
+      .select("*")
+      .eq("valor", texto);
+
+    let motivos = [];
+
+    if (denuncias && denuncias.length > 0) {
+      motivos = denuncias.map((d) => d.motivo);
+    }
+
+    // SE ESTÁ NA LISTA NEGRA
+    if (blacklist && blacklist.length > 0) {
       return res.json({
-        tipo: reputacao[0].tipo || detectarTipo(texto),
-        status: reputacao[0].status || "SEGURO",
-        score: reputacao[0].pontuacao || 0,
-        motivo: "Resultado vindo da reputação do banco",
+        tipo,
+        status: "ALTO RISCO",
+        score: 100,
+        motivo: "Item presente na lista negra",
+        denuncias: motivos.length,
+        motivos,
       });
     }
 
-    // DETECÇÃO LOCAL
+    // SE TEM REPUTAÇÃO
+    if (reputacao && reputacao.length > 0) {
+      return res.json({
+        tipo,
+        status: reputacao[0].status,
+        score: reputacao[0].pontuacao,
+        motivo: "Resultado vindo da reputação do banco",
+        denuncias: reputacao[0].denuncias || 0,
+        motivos,
+      });
+    }
+
+    // ANÁLISE AUTOMÁTICA
     let score = 0;
-    let status = "SEGURO";
     let motivo = "Nenhum risco encontrado";
 
     if (
       texto.includes(".xyz") ||
-      texto.includes("ganhe dinheiro") ||
-      texto.includes("pix urgente")
+      texto.includes("promo") ||
+      texto.includes("gratis")
     ) {
-      score = 40;
-      status = "SUSPEITO";
+      score += 40;
       motivo = "Domínio suspeito";
     }
 
-    if (
-      texto.includes("clique aqui") ||
-      texto.includes("urgente")
-    ) {
-      score += 40;
-      status = "ALTO RISCO";
-      motivo = "Tentativa suspeita detectada";
+    if (texto.includes("suporte")) {
+      score += 20;
     }
 
+    const status = calcularStatus(score);
+
     return res.json({
-      tipo: detectarTipo(texto),
+      tipo,
       status,
       score,
       motivo,
+      denuncias: motivos.length,
+      motivos,
     });
   } catch (error) {
     console.log(error);
 
     return res.status(500).json({
-      erro: "Erro interno",
+      erro: "Erro ao verificar",
     });
   }
 });
+
+// =========================
+// DENUNCIAR
+// =========================
 
 app.post("/api/denunciar", async (req, res) => {
   try {
@@ -140,8 +161,18 @@ app.post("/api/denunciar", async (req, res) => {
 
     const tipo = detectarTipo(valor);
 
-    // INSERE NA LISTA NEGRA
-    await supabase.from("lista_negra").insert([
+    // SALVA DENÚNCIA
+    await supabase.from("denuncias").insert([
+      {
+        valor,
+        tipo,
+        motivo,
+        detalhes,
+      },
+    ]);
+
+    // LISTA NEGRA
+    await supabase.from("lista_negra").upsert([
       {
         valor,
         tipo,
@@ -158,12 +189,15 @@ app.post("/api/denunciar", async (req, res) => {
       .limit(1);
 
     if (reputacao && reputacao.length > 0) {
+      const novaPontuacao = reputacao[0].pontuacao + 20;
+      const novoTotal = reputacao[0].denuncias + 1;
+
       await supabase
         .from("reputacoes")
         .update({
-          denuncias: reputacao[0].denuncias + 1,
-          pontuacao: reputacao[0].pontuacao + 50,
-          status: "ALTO RISCO",
+          denuncias: novoTotal,
+          pontuacao: novaPontuacao,
+          status: calcularStatus(novaPontuacao),
         })
         .eq("valor", valor);
     } else {
@@ -173,7 +207,7 @@ app.post("/api/denunciar", async (req, res) => {
           tipo,
           denuncias: 1,
           pontuacao: 50,
-          status: "ALTO RISCO",
+          status: "SUSPEITO",
         },
       ]);
     }
@@ -194,5 +228,5 @@ app.post("/api/denunciar", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("Servidor rodando");
+  console.log("Servidor AntiGolpe rodando");
 });
