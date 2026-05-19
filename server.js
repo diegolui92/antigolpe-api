@@ -8,125 +8,105 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ================= SUPABASE =================
+// ==================== SUPABASE ====================
 
 const supabase = createClient(
   "https://ojuiufrckgwndhqnqxmo.supabase.co",
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9qdWl1ZnJja2d3bmRocW5xeG1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MDQwNDcsImV4cCI6MjA5NDM4MDA0N30.e-nV3mfYha04gHOEwl9b4q55Ukzio029GDb5DzJBAEc"
 );
 
-// ================= FUNÇÕES =================
+// ==================== FUNÇÕES ====================
 
 function gerarApiKey() {
   return "ag_" + crypto.randomBytes(16).toString("hex");
 }
 
 function detectarTipo(texto) {
-  texto = texto.trim();
+  const valor = texto.trim();
 
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(texto)) {
+  if (valor.includes("@")) {
     return "EMAIL";
   }
 
   if (
-    texto.includes("www.") ||
-    texto.includes(".com") ||
-    texto.includes(".net") ||
-    texto.includes(".org") ||
-    texto.includes("http")
+    valor.startsWith("http") ||
+    valor.startsWith("www.") ||
+    valor.includes(".com") ||
+    valor.includes(".xyz") ||
+    valor.includes(".net")
   ) {
     return "SITE";
   }
 
-  const numeros = texto.replace(/\D/g, "");
+  const somenteNumeros = valor.replace(/\D/g, "");
 
-  if (numeros.length >= 10 && numeros.length <= 13) {
+  if (somenteNumeros.length >= 10 && somenteNumeros.length <= 13) {
     return "TELEFONE";
-  }
-
-  if (numeros.length === 11) {
-    return "CPF";
-  }
-
-  if (
-    texto.toLowerCase().includes("pix") ||
-    texto.toLowerCase().includes("chave")
-  ) {
-    return "PIX";
   }
 
   return "TEXTO";
 }
 
-function analisarRisco(texto, tipo) {
+function analisarRiscoLocal(texto) {
   const t = texto.toLowerCase();
 
   let score = 0;
   let motivos = [];
 
-  // FRASES SUSPEITAS
-  const palavras = [
-    "pix",
-    "urgente",
-    "clique aqui",
-    "dinheiro rápido",
-    "ganhe dinheiro",
-    "premio",
-    "senha",
-    "cartão",
-    "gratuito",
-    "100% garantido",
-    "renda extra",
-    "liberação imediata",
-  ];
-
-  palavras.forEach((p) => {
-    if (t.includes(p)) {
-      score += 20;
-      motivos.push(p);
-    }
-  });
-
-  // SITE SUSPEITO
-  if (tipo === "SITE") {
-    if (
-      t.includes(".xyz") ||
-      t.includes(".top") ||
-      t.includes(".click") ||
-      t.includes(".shop")
-    ) {
-      score += 40;
-      motivos.push("domínio suspeito");
-    }
-
-    if (
-      t.includes("goog1e") ||
-      t.includes("faceboook") ||
-      t.includes("mercadolivre-premio")
-    ) {
-      score += 60;
-      motivos.push("possível phishing");
-    }
+  // PIX
+  if (t.includes("pix")) {
+    score += 40;
+    motivos.push("PIX suspeito");
   }
 
-  // EMAIL SUSPEITO
-  if (tipo === "EMAIL") {
-    if (
-      t.includes("suporte-banco") ||
-      t.includes("premio") ||
-      t.includes("bonus")
-    ) {
-      score += 40;
-      motivos.push("email suspeito");
-    }
+  // urgência
+  if (
+    t.includes("urgente") ||
+    t.includes("agora") ||
+    t.includes("últimas vagas")
+  ) {
+    score += 30;
+    motivos.push("Urgência");
   }
 
-  // TELEFONE
-  if (tipo === "TELEFONE") {
-    if (t.startsWith("0800")) {
-      score += 10;
-      motivos.push("telefone mascarado");
-    }
+  // promessa falsa
+  if (
+    t.includes("ganhe dinheiro") ||
+    t.includes("renda extra") ||
+    t.includes("lucro garantido")
+  ) {
+    score += 40;
+    motivos.push("Promessa suspeita");
+  }
+
+  // links estranhos
+  if (
+    t.includes(".xyz") ||
+    t.includes(".top") ||
+    t.includes(".click") ||
+    t.includes(".vip")
+  ) {
+    score += 40;
+    motivos.push("Domínio suspeito");
+  }
+
+  // encurtador
+  if (
+    t.includes("bit.ly") ||
+    t.includes("tinyurl") ||
+    t.includes("cutt.ly")
+  ) {
+    score += 35;
+    motivos.push("Link encurtado");
+  }
+
+  // whatsapp golpe
+  if (
+    t.includes("clique aqui") ||
+    t.includes("acessar agora")
+  ) {
+    score += 25;
+    motivos.push("Indução ao clique");
   }
 
   let status = "SEGURO";
@@ -138,82 +118,115 @@ function analisarRisco(texto, tipo) {
   }
 
   return {
-    status,
     score,
-    mensagem:
-      motivos.length > 0
-        ? motivos.join(" | ")
-        : "Nenhum risco encontrado",
+    status,
+    motivos,
   };
 }
 
-// ================= ROTAS =================
+// ==================== VERIFICAR ====================
 
-// TESTE
-app.get("/", (req, res) => {
-  res.send("API AntiGolpe funcionando 🚀");
-});
-
-// CRIAR CHAVE
-app.post("/api/criar-chave", async (req, res) => {
-  try {
-    const { nome } = req.body;
-
-    const api_key = gerarApiKey();
-
-    const { error } = await supabase.from("api_keys").insert([
-      {
-        nome,
-        api_key,
-      },
-    ]);
-
-    if (error) {
-      return res.status(500).json({
-        erro: error.message,
-      });
-    }
-
-    res.json({
-      api_key,
-    });
-  } catch (err) {
-    res.status(500).json({
-      erro: err.message,
-    });
-  }
-});
-
-// VERIFICAR
 app.post("/api/verificar", async (req, res) => {
   try {
     const { texto, api_key } = req.body;
 
-    if (!texto || !api_key) {
+    if (!texto) {
       return res.status(400).json({
-        erro: "Texto e API Key obrigatórios",
+        erro: "Texto não enviado",
       });
     }
 
+    // ====================
+    // CONSULTA LISTA NEGRA
+    // ====================
+
+    const { data: blacklist } = await supabase
+      .from("lista_negra")
+      .select("*")
+      .eq("valor", texto)
+      .limit(1);
+
+    if (blacklist && blacklist.length > 0) {
+      return res.json({
+        tipo: blacklist[0].tipo || detectarTipo(texto),
+        status: "ALTO RISCO",
+        score: 100,
+        motivo:
+          blacklist[0].motivo || "Encontrado na lista negra",
+      });
+    }
+
+    // ====================
+    // CONSULTA REPUTAÇÃO
+    // ====================
+
+    const { data: reputacao } = await supabase
+      .from("reputacoes")
+      .select("*")
+      .eq("valor", texto)
+      .limit(1);
+
+    if (reputacao && reputacao.length > 0) {
+      return res.json({
+        tipo: reputacao[0].tipo || detectarTipo(texto),
+        status: reputacao[0].status || "SEGURO",
+        score: reputacao[0].pontuacao || 0,
+        motivo: "Resultado vindo da reputação do banco",
+      });
+    }
+
+    // ====================
+    // ANÁLISE LOCAL IA
+    // ====================
+
     const tipo = detectarTipo(texto);
 
-    const resultado = analisarRisco(texto, tipo);
+    const analise = analisarRiscoLocal(texto);
 
-    res.json({
+    // ====================
+    // SALVAR REPUTAÇÃO
+    // ====================
+
+    await supabase.from("reputacoes").insert({
+      valor: texto,
       tipo,
-      ...resultado,
+      pontuacao: analise.score,
+      status: analise.status,
+      denuncias: 0,
     });
-  } catch (err) {
-    res.status(500).json({
-      erro: err.message,
+
+    return res.json({
+      tipo,
+      status: analise.status,
+      score: analise.score,
+      motivo:
+        analise.motivos.length > 0
+          ? analise.motivos.join(" | ")
+          : "Nenhum risco encontrado",
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      erro: "Erro interno no servidor",
     });
   }
 });
 
-// ================= SERVIDOR =================
+// ==================== API KEY ====================
 
-const PORT = process.env.PORT || 8080;
+app.get("/gerar-chave", (req, res) => {
+  const chave = gerarApiKey();
+
+  return res.json({
+    api_key: chave,
+  });
+});
+
+// ==================== START ====================
+
+const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("Servidor rodando na porta", PORT);
+  console.log("Servidor AntiGolpe rodando");
 });
