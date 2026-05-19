@@ -135,7 +135,77 @@ app.post("/api/verificar", async (req, res) => {
         erro: "Texto não enviado",
       });
     }
+// ==================== DENÚNCIAS ====================
 
+app.post("/api/denunciar", async (req, res) => {
+  try {
+    const { valor, motivo, detalhes } = req.body;
+
+    if (!valor) {
+      return res.status(400).json({
+        erro: "Valor não enviado",
+      });
+    }
+
+    const tipo = detectarTipo(valor);
+
+    // salva denúncia
+    await supabase.from("denuncias").insert({
+      valor,
+      tipo,
+      motivo,
+      detalhes,
+    });
+
+    // verifica reputação existente
+    const { data: reputacao } = await supabase
+      .from("reputacoes")
+      .select("*")
+      .eq("valor", valor)
+      .limit(1);
+
+    if (reputacao && reputacao.length > 0) {
+      const atual = reputacao[0];
+
+      let novaPontuacao = (atual.pontuacao || 0) + 40;
+
+      let novoStatus = "SUSPEITO";
+
+      if (novaPontuacao >= 80) {
+        novoStatus = "ALTO RISCO";
+      }
+
+      await supabase
+        .from("reputacoes")
+        .update({
+          pontuacao: novaPontuacao,
+          denuncias: (atual.denuncias || 0) + 1,
+          status: novoStatus,
+        })
+        .eq("id", atual.id);
+    } else {
+      // cria reputação inicial
+      await supabase.from("reputacoes").insert({
+        valor,
+        tipo,
+        pontuacao: 40,
+        denuncias: 1,
+        status: "SUSPEITO",
+      });
+    }
+
+    return res.json({
+      sucesso: true,
+      mensagem: "Denúncia registrada",
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      erro: "Erro ao denunciar",
+    });
+  }
+});
     // ====================
     // CONSULTA LISTA NEGRA
     // ====================

@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  Alert,
 } from "react-native";
 
 export default function VerificarScreen() {
@@ -31,16 +32,15 @@ export default function VerificarScreen() {
       return "SITE";
     }
 
-    // TELEFONE
+    // CPF / TELEFONE
     const numeros = texto.replace(/\D/g, "");
+
+    if (numeros.length === 11) {
+      return "CPF";
+    }
 
     if (numeros.length >= 10 && numeros.length <= 13) {
       return "TELEFONE";
-    }
-
-    // CPF
-    if (numeros.length === 11) {
-      return "CPF";
     }
 
     // PIX
@@ -81,12 +81,37 @@ export default function VerificarScreen() {
     } catch (error) {
       console.log(error);
 
-      setResultado({
-        status: "ERRO",
-        score: 0,
-        mensagem: "Erro ao conectar API",
-        tipo: "ERRO",
-      });
+      Alert.alert("Erro", "Erro ao verificar");
+    }
+  }
+
+  async function denunciar() {
+    try {
+      const response = await fetch(
+        "https://antigolpe-api-production.up.railway.app/api/denunciar",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            valor: texto,
+            motivo: "Denunciado pelo usuário",
+            detalhes: "Denúncia enviada pelo app",
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      Alert.alert(
+        "Denúncia enviada",
+        data.mensagem || "Denúncia registrada com sucesso"
+      );
+    } catch (error) {
+      console.log(error);
+
+      Alert.alert("Erro", "Erro ao denunciar");
     }
   }
 
@@ -96,7 +121,7 @@ export default function VerificarScreen() {
 
       <TextInput
         style={styles.input}
-        placeholder="Digite telefone, site, email ou texto"
+        placeholder="Digite telefone, email, site, pix ou mensagem"
         placeholderTextColor="#999"
         multiline
         value={texto}
@@ -105,6 +130,15 @@ export default function VerificarScreen() {
 
       <TouchableOpacity style={styles.button} onPress={verificar}>
         <Text style={styles.buttonText}>Verificar</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={denunciar}
+        style={styles.denunciarButton}
+      >
+        <Text style={styles.denunciarText}>
+          Denunciar
+        </Text>
       </TouchableOpacity>
 
       {resultado && (
@@ -119,7 +153,9 @@ export default function VerificarScreen() {
               {
                 color:
                   resultado.status === "ALTO RISCO"
-                    ? "#ff4d4d"
+                    ? "#ff4444"
+                    : resultado.status === "SUSPEITO"
+                    ? "#ffaa00"
                     : "#00ff99",
               },
             ]}
@@ -127,10 +163,12 @@ export default function VerificarScreen() {
             Status: {resultado.status}
           </Text>
 
-          <Text style={styles.score}>Score: {resultado.score}</Text>
+          <Text style={styles.score}>
+            Score: {resultado.score}
+          </Text>
 
           <Text style={styles.mensagem}>
-            {resultado.mensagem}
+            {resultado.motivo || resultado.mensagem}
           </Text>
         </View>
       )}
@@ -174,6 +212,20 @@ const styles = StyleSheet.create({
   buttonText: {
     color: "#fff",
     fontSize: 22,
+    fontWeight: "bold",
+  },
+
+  denunciarButton: {
+    backgroundColor: "#ff4444",
+    padding: 18,
+    borderRadius: 20,
+    alignItems: "center",
+    marginTop: 12,
+  },
+
+  denunciarText: {
+    color: "#fff",
+    fontSize: 20,
     fontWeight: "bold",
   },
 
